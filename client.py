@@ -1,18 +1,15 @@
 import socket
 import os
 import hashlib
+import time
 
-# endereço do main
 MAIN_ADDR = 'localhost'
 MAIN_PORT = 5555
 
-# tamanho de mensagem de controle
 CONTROL_MSG_SIZE_BYTES = 1024
-# tamanho maximo de mensagem
 MAX_CHUNK_SIZE_BYTES = 1024 * 4
 
 class Client:
-    # construtor
     def __init__(self, host: str, port: int) -> None:
         self.srv_addr = (host, port)
         if not os.path.exists('client_dir/'):
@@ -28,21 +25,25 @@ class Client:
 
         with open(file_path, 'rb') as f, socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.connect(self.srv_addr)
+            print(f"# client to main: send UPLOAD control message")
             s.sendall(control_msg)
 
+            print(f"# client from main: recv READY message")
             control_msg = self.recvall(s, CONTROL_MSG_SIZE_BYTES)
             control_msg = control_msg.decode()
             control_msg = control_msg.strip().split('$')
 
             if control_msg[0] != 'READY':
                 print("Server not ready")
-                quit()
+                return
             
             bytes_sent = 0
             while bytes_sent < file_size:
                 chunk = f.read(min(MAX_CHUNK_SIZE_BYTES, file_size - bytes_sent))
                 s.sendall(chunk)
                 bytes_sent += len(chunk)
+
+        print(f"Upload of {file_name} completed")
 
     def list_images(self) -> str:
         control_msg = 'LISTING'.ljust(CONTROL_MSG_SIZE_BYTES, ' ').encode()
@@ -57,18 +58,19 @@ class Client:
             answer = self.recvall(s, answer_size)
         return answer.decode()
 
-
-    def download_image(self, file_name: str) -> None:
+    def download_image(self, file_name: str) -> float:
+        start_time = time.time()
+        
         control_msg = f'DOWNLOAD${file_name}'
         control_msg = control_msg.ljust(CONTROL_MSG_SIZE_BYTES, ' ')
         control_msg = control_msg.encode()
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.connect(self.srv_addr)
-            # client to main: send DONWLOAD$FILENAME
+            print(f"# client to main: send DOWNLOAD control message")
             s.sendall(control_msg)
 
-            # client from main: recv SIZE_BYTES
+            print(f"# client from main: recv SIZE_BYTES")
             control_msg = self.recvall(s, CONTROL_MSG_SIZE_BYTES)
             control_msg = control_msg.decode().strip().split('$')
             file_size = int(control_msg[0])
@@ -77,17 +79,19 @@ class Client:
             control_msg = control_msg.ljust(CONTROL_MSG_SIZE_BYTES, ' ')
             control_msg = control_msg.encode()
 
-            # client to main: send READY
             s.sendall(control_msg)
 
             with open(f'client_dir/{file_name}', 'wb') as f:
                 bytes_saved = 0
                 while bytes_saved < file_size:
-                    # client from main: recv CHUNK
                     chunk = self.recvall(s, min(MAX_CHUNK_SIZE_BYTES, file_size - bytes_saved))
                     chunk_size = f.write(chunk)
                     bytes_saved += chunk_size
 
+        end_time = time.time()
+        download_time = end_time - start_time
+        print(f"Download of {file_name} completed in {download_time:.4f} seconds")
+        return download_time
 
     def delete_image(self, file_name) -> None:
         control_msg = f'DELETE${file_name}'
@@ -96,7 +100,6 @@ class Client:
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.connect(self.srv_addr)
-            # client to main: send DELETE$FILENAME
             s.sendall(control_msg)
 
     def recvall(self, conn: socket.socket, msg_size: int) -> bytes:
@@ -108,17 +111,12 @@ class Client:
             bytes_recvd += len(chunk)
         return b''.join(chunks)
 
-###############################################################################
-
-# retorna string com hash do arquivo para fins de verificação de integridade
 def calculate_md5(file_path):
     md5_hash = hashlib.md5()
     with open(file_path, 'rb') as f:
         for chunk in iter(lambda: f.read(4096), b""):
             md5_hash.update(chunk)
     return md5_hash.hexdigest()
-
-###############################################################################
 
 if __name__ == '__main__':
     c = Client(MAIN_ADDR, MAIN_PORT)
@@ -138,8 +136,9 @@ if __name__ == '__main__':
 
     input('...')
     print('\ndownloading')
-    c.download_image('random_garbage')
+    download_time = c.download_image('random_garbage')
     print(f"md5 of random_garbage AFTER:\n{calculate_md5('client_dir/random_garbage')}")
+    print(f"Download time: {download_time:.4f} seconds")
 
     input('...')
     print('deleting remote copy')
