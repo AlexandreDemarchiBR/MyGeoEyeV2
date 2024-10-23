@@ -2,28 +2,23 @@ import socket
 import os
 import threading
 import hashlib
-
-
-
-DATANODE_ADDR = 'localhost'
-DATANODE_PORT = 6666
+import time
 
 CONTROL_MSG_SIZE_BYTES = 1024
 MAX_CHUNK_SIZE_BYTES = 1024 * 4
 
 class Datanode:
     def __init__(self, host, port) -> None:
-        self.listen_addr = (host,port)
+        self.listen_addr = (host, port)
         self.lock = threading.Lock()
         if not os.path.exists('datanode_dir/'):
             os.makedirs('datanode_dir/')
     
-    # main server loop
     def start(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(self.listen_addr)
             s.listen(400)
-            print(f'Server is listening on {self.listen_addr}')
+            print(f'Datanode is listening on {self.listen_addr}')
             while True:
                 try:
                     conn, addr = s.accept()
@@ -35,24 +30,17 @@ class Datanode:
                     s.close()
                     quit()
 
-
-    # runs in a thread to process a client connection
     def process_connection(self, conn: socket.socket, addr: tuple[str, int]):
         with conn:
-            # receiving the type of request
+            print(f"# datanode from main: recv control message from {addr}")
             control_msg = self.recvall(conn, CONTROL_MSG_SIZE_BYTES)
             control_msg = control_msg.decode()
-            # separating the fields
             control_msg = control_msg.strip().split('$')
-            # interpreting the request
             if control_msg[0] == 'UPLOAD':
                 print(f'{addr} requesting upload')
                 file_name = control_msg[1]
                 file_size = int(control_msg[2])
                 self.save_image(conn, addr, file_name, file_size)
-            elif control_msg[0] == 'LISTING':
-                print(f'{addr} requesting listing')
-                self.list_images(conn, addr)
             elif control_msg[0] == 'DOWNLOAD':
                 print(f'{addr} requesting download of {control_msg[1]}')
                 self.send_image(conn, addr, control_msg[1])
@@ -61,17 +49,21 @@ class Datanode:
                 self.delete_image(conn, addr, control_msg[1])
 
     def save_image(self, conn: socket.socket, addr: tuple[str, int], file_name: str, file_size: int):
+        print(f"# datanode to main: send READY message to {addr}")
         control_msg = 'READY'.ljust(CONTROL_MSG_SIZE_BYTES ,' ').encode()
         conn.sendall(control_msg)
         file_path = f'datanode_dir/{file_name}'
+        start_time = time.time()
         with open(file_path, 'wb') as f, self.lock:
             bytes_saved = 0
             while bytes_saved < file_size:
                 chunk = self.recvall(conn, min(MAX_CHUNK_SIZE_BYTES, file_size - bytes_saved))
                 chunk_size = f.write(chunk)
                 bytes_saved += chunk_size
+                print(f"Saved {bytes_saved}/{file_size} bytes of {file_name}")
+        end_time = time.time()
         print(f"md5 of {file_name}:\n{calculate_md5(file_path)}")
-        print(f'upload for {file_name} from {addr} done')
+        print(f'Upload for {file_name} from {addr} completed in {end_time - start_time:.4f} seconds')
 
     def send_image(self, conn: socket.socket, addr: tuple[str, int], file_name: str):
         file_size = os.path.getsize(f'datanode_dir/{file_name}')
@@ -79,25 +71,29 @@ class Datanode:
         control_msg = control_msg.ljust(CONTROL_MSG_SIZE_BYTES, ' ')
         control_msg = control_msg.encode()
 
-        # datanode to main: send SIZE_BYTES
+        print(f"# datanode to main: send SIZE_BYTES to {addr}")
         conn.sendall(control_msg)
 
-        # datanode from main: redv READY
+        print(f"# datanode from main: recv READY message from {addr}")
         control_msg = self.recvall(conn, CONTROL_MSG_SIZE_BYTES)
 
         file_path = f'datanode_dir/{file_name}'
+        start_time = time.time()
         with open(file_path, 'rb') as f:
             bytes_sent = 0
             while bytes_sent < file_size:
                 chunk = f.read(min(MAX_CHUNK_SIZE_BYTES, file_size - bytes_sent))
-                # datanode to main: send CHUNK
                 conn.sendall(chunk)
                 bytes_sent += len(chunk)
-        print(f'sending of {file_name} to {addr} done')
+                print(f"Sent {bytes_sent}/{file_size} bytes of {file_name}")
+        end_time = time.time()
+        print(f'Sending of {file_name} to {addr} completed in {end_time - start_time:.4f} seconds')
 
     def delete_image(self, conn: socket.socket, addr: tuple[str, int], file_name: str):
-        print(f'deletion of {file_name} requested by {addr} done')
+        start_time = time.time()
         os.remove(f'datanode_dir/{file_name}')
+        end_time = time.time()
+        print(f'Deletion of {file_name} requested by {addr} completed in {end_time - start_time:.4f} seconds')
 
     def recvall(self, conn: socket.socket, msg_size: int) -> bytes:
         bytes_recvd = 0
@@ -108,8 +104,6 @@ class Datanode:
             bytes_recvd += len(chunk)
         return b''.join(chunks)
 
-###############################################################################
-
 def calculate_md5(file_path):
     md5_hash = hashlib.md5()
     with open(file_path, 'rb') as f:
@@ -117,8 +111,12 @@ def calculate_md5(file_path):
             md5_hash.update(chunk)
     return md5_hash.hexdigest()
 
-###############################################################################
-
 if __name__ == '__main__':
-    s = Datanode(DATANODE_ADDR, DATANODE_PORT)
+    import sys
+    if len(sys.argv) != 3:
+        print("Usage: python datanode.py <host> <port>")
+        sys.exit(1)
+    host = sys.argv[1]
+    port = int(sys.argv[2])
+    s = Datanode(host, port)
     s.start()
