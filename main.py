@@ -1,20 +1,22 @@
 import socket
 import os
 import threading
+import random
+import time
 
 MAIN_ADDR = 'localhost'
 MAIN_PORT = 5555
 
-DATANODE_ADDR = 'localhost'
-DATANODE_PORT = 6666
-
 CONTROL_MSG_SIZE_BYTES = 1024
 MAX_CHUNK_SIZE_BYTES = 1024 * 4
 
+REPLICATION_FACTOR = 2  # Pode ser alterado conforme necessário
+
 class Main:
-    def __init__(self, host: str, port: int) -> None:
-        self.listen_addr = (host,port)
+    def __init__(self, host: str, port: int, replication_factor: int) -> None:
+        self.listen_addr = (host, port)
         self.workers = []
+        self.replication_factor = replication_factor
         self.lock = threading.Lock()
         with open('main_dir/workers.txt', 'r') as f:
             workers = f.readlines()
@@ -23,9 +25,8 @@ class Main:
                 self.workers.append((line[0], int(line[1])))
         if not os.path.exists('main_dir/'):
             os.makedirs('main_dir/')
+        print(f"Main server initialized with {len(self.workers)} workers and replication factor {self.replication_factor}")
 
-    
-    # main server loop
     def start(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(self.listen_addr)
@@ -42,66 +43,61 @@ class Main:
                     s.close()
                     quit()
 
-
-    # runs in a thread to process a client connection
     def process_connection(self, conn: socket.socket, addr: tuple[str, int]):
         with conn:
-            # receiving the type of request
+            print(f"# main from client: recv control message from {addr}")
             control_msg = self.recvall(conn, CONTROL_MSG_SIZE_BYTES)
             control_msg = control_msg.decode()
-            # separating the fields
             control_msg = control_msg.strip().split('$')
-            # interpreting the request
             if control_msg[0] == 'UPLOAD':
-                print(f'{addr} requesting upload')
+                print(f'{addr} requesting upload of {control_msg[1]}')
                 file_name = control_msg[1]
                 file_size = int(control_msg[2])
-                self.upload_to_datanode(conn, addr, self.workers[0], file_name, file_size)
+                self.upload_to_datanodes(conn, addr, file_name, file_size)
             elif control_msg[0] == 'LISTING':
                 print(f'{addr} requesting listing')
                 self.list_images(conn, addr)
             elif control_msg[0] == 'DOWNLOAD':
                 print(f'{addr} requesting download of {control_msg[1]}')
-                self.download_from_datanode(conn, addr, self.workers[0], control_msg[1])
+                self.download_from_datanodes(conn, addr, control_msg[1])
             elif control_msg[0] == 'DELETE':
                 print(f'{addr} requesting deletion of {control_msg[1]}')
-                self.delete_in_datanode(self.workers[0], control_msg[1])
+                self.delete_in_datanodes(control_msg[1])
 
+    def upload_to_datanodes(self, client_conn: socket.socket, client_addr: tuple[str, int], file_name: str, file_size: int):
+        selected_datanodes = random.sample(self.workers, min(self.replication_factor, len(self.workers)))
+        print(f"Selected datanodes for upload of {file_name}: {selected_datanodes}")
+        
+        start_time = time.time()
+        for datanode_addr in selected_datanodes:
+            self.upload_to_datanode(client_conn, client_addr, datanode_addr, file_name, file_size)
 
-    def list_images(self, conn: socket.socket, client_addr: tuple[str, int]):
-        with conn:
-            # sending message size
-            msg = os.listdir('main_dir')
-            msg.remove('workers.txt')
-            msg = ' '.join(msg).encode()
-
-            msg_size = len(msg)
-            conn.sendall(str(msg_size).ljust(1024, ' ').encode())
-
-            # sending message
-            conn.sendall(msg)
-            print(f'listing for {client_addr} done')
-
-
+        with open(f'main_dir/{file_name}', 'w') as f, self.lock:
+            f.write(f"{file_size},{','.join([f'{addr[0]}:{addr[1]}' for addr in selected_datanodes])}")
+        
+        end_time = time.time()
+        print(f"Upload of {file_name} completed in {end_time - start_time:.4f} seconds")
 
     def upload_to_datanode(self, client_conn: socket.socket, client_addr: tuple[str, int], datanode_addr: tuple[str, int], file_name: str, file_size: int):
-        
         control_msg = f'UPLOAD${file_name}${file_size}'
         control_msg = control_msg.ljust(CONTROL_MSG_SIZE_BYTES, ' ')
         control_msg = control_msg.encode()
         
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as datanode_conn:
+            print(f"# main to datanode: send UPLOAD control message to {datanode_addr}")
             datanode_conn.connect(datanode_addr)
             datanode_conn.sendall(control_msg)
 
+            print(f"# main from datanode: recv READY message from {datanode_addr}")
             control_msg = self.recvall(datanode_conn, CONTROL_MSG_SIZE_BYTES)
             msg = control_msg.decode()
             msg = msg.strip().split('$')
 
             if msg[0] != 'READY':
-                print("Datanode not ready")
+                print(f"Datanode {datanode_addr} not ready")
                 return
             
+            print(f"# main to client: send READY message to {client_addr}")
             client_conn.sendall(control_msg)
             
             bytes_sent = 0
@@ -109,34 +105,37 @@ class Main:
                 chunk = self.recvall(client_conn, min(MAX_CHUNK_SIZE_BYTES, file_size - bytes_sent))
                 datanode_conn.sendall(chunk)
                 bytes_sent += len(chunk)
-            
-            with open(f'main_dir/{file_name}', 'w') as f, self.lock:
-                f.write(str(file_size))
-        print(f'upload for {client_addr} in datanode {datanode_addr} done')
-    
-    def download_from_datanode(self, client_conn: socket.socket, client_addr: tuple[str, int], datanode_addr: tuple[str, int], file_name: str):
+                print(f"Sent {bytes_sent}/{file_size} bytes of {file_name} to {datanode_addr}")
+
+    def download_from_datanodes(self, client_conn: socket.socket, client_addr: tuple[str, int], file_name: str):
+        with open(f'main_dir/{file_name}', 'r') as f:
+            file_info = f.read().split(',')
+            file_size = int(file_info[0])
+            datanode_addrs = [addr.split(':') for addr in file_info[1:]]
+            datanode_addr = random.choice(datanode_addrs)
+            datanode_addr = (datanode_addr[0], int(datanode_addr[1]))
+
+        print(f"Selected datanode for download of {file_name}: {datanode_addr}")
+        self.download_from_datanode(client_conn, client_addr, datanode_addr, file_name, file_size)
+
+    def download_from_datanode(self, client_conn: socket.socket, client_addr: tuple[str, int], datanode_addr: tuple[str, int], file_name: str, file_size: int):
         control_msg = f'DOWNLOAD${file_name}'
         control_msg = control_msg.ljust(CONTROL_MSG_SIZE_BYTES, ' ')
         control_msg = control_msg.encode()
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as datanode_conn:
+            print(f"# main to datanode: send DOWNLOAD control message to {datanode_addr}")
             datanode_conn.connect(datanode_addr)
-            # main to datanode: send DOWNLOAD$FILENAME
             datanode_conn.sendall(control_msg)
 
-            # main from datanode: recv SIZE_BYTES
+            print(f"# main from datanode: recv SIZE_BYTES from {datanode_addr}")
             control_msg = self.recvall(datanode_conn, CONTROL_MSG_SIZE_BYTES)
-            msg = control_msg.decode()
-            msg = msg.strip().split('$')
-            file_size = int(msg[0])
-
-            # main to client: send SIZE_BYTES
+            print(f"# main to client: send SIZE_BYTES to {client_addr}")
             client_conn.sendall(control_msg)
 
-            # main from client: recv READY
+            print(f"# main from client: recv READY message from {client_addr}")
             control_msg = self.recvall(client_conn, CONTROL_MSG_SIZE_BYTES)
-
-            # main to datanode: send READY
+            print(f"# main to datanode: send READY message to {datanode_addr}")
             datanode_conn.sendall(control_msg)
 
             bytes_sent = 0
@@ -144,22 +143,45 @@ class Main:
                 chunk = self.recvall(datanode_conn, min(MAX_CHUNK_SIZE_BYTES, file_size - bytes_sent))
                 client_conn.sendall(chunk)
                 bytes_sent += len(chunk)
-        print(f'download for {client_addr} from datanode {datanode_addr} done')
+                print(f"Sent {bytes_sent}/{file_size} bytes of {file_name} to {client_addr}")
+
+    def delete_in_datanodes(self, file_name: str):
+        with open(f'main_dir/{file_name}', 'r') as f:
+            file_info = f.read().split(',')
+            datanode_addrs = [addr.split(':') for addr in file_info[1:]]
+
+        print(f"Deleting {file_name} from datanodes: {datanode_addrs}")
+        for datanode_addr in datanode_addrs:
+            datanode_addr = (datanode_addr[0], int(datanode_addr[1]))
+            self.delete_in_datanode(datanode_addr, file_name)
+
+        os.remove(f'main_dir/{file_name}')
+        print(f"Deleted {file_name} from main server")
 
     def delete_in_datanode(self, datanode_addr: tuple[str, int], file_name: str):
         control_msg = f'DELETE${file_name}'
         control_msg = control_msg.ljust(CONTROL_MSG_SIZE_BYTES, ' ')
         control_msg = control_msg.encode()
 
-        # main to datanode: send DELETE$FILENAME
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as datanode_conn:
+            print(f"# main to datanode: send DELETE control message to {datanode_addr}")
             datanode_conn.connect(datanode_addr)
             datanode_conn.sendall(control_msg)
-        os.remove(f'main_dir/{file_name}')
-        print(f'deletion of {file_name} in datanode {datanode_addr} done')
 
+    def list_images(self, conn: socket.socket, client_addr: tuple[str, int]):
+        with conn:
+            msg = os.listdir('main_dir')
+            msg.remove('workers.txt')
+            msg = ' '.join(msg).encode()
 
-    
+            msg_size = len(msg)
+            print(f"# main to client: send listing size {msg_size} to {client_addr}")
+            conn.sendall(str(msg_size).ljust(1024, ' ').encode())
+
+            print(f"# main to client: send listing to {client_addr}")
+            conn.sendall(msg)
+            print(f'Listing for {client_addr} done')
+
     def recvall(self, conn: socket.socket, msg_size: int) -> bytes:
         bytes_recvd = 0
         chunks = []
@@ -170,5 +192,5 @@ class Main:
         return b''.join(chunks)
 
 if __name__ == '__main__':
-    s = Main(MAIN_ADDR, MAIN_PORT)
+    s = Main(MAIN_ADDR, MAIN_PORT, REPLICATION_FACTOR)
     s.start()
