@@ -1,0 +1,84 @@
+UPLOAD:
+    start conn client-main
+
+    client to main: send UPLOAD$FILENAME$SIZE_BYTES
+    main from client: recv UPLOAD$FILENAME$SIZE_BYTES
+
+    start conn main-datanode
+    
+    main to datanode: send UPLOAD$FILENAME$SIZE_BYTES
+    datanode from main: recv UPLOAD$FILENAME$SIZE_BYTES
+
+    datanode to main: send READY
+    main from datanode: recv READY
+
+    main to client: send READY
+    client from main: recv READY
+
+    loop:
+        client to main: send CHUNK
+        main from client: recv CHUNK
+        main to datanode: send CHUNK
+        datanode from main: recv CHUNK
+    
+    close conn main-datanode
+    close conn client-main
+
+LISTING:
+    start conn client-main
+
+    client to main: send LISTING
+    main from client: recv LISTING
+
+    main to client: send SIZE_BYTES
+    client from main: recv SIZE_BYTES
+
+    main to client: loop send ANSWER
+    client from main: loop recv ANSWER
+
+    close conn client-main
+DOWNLOAD:
+    start conn client-main
+
+    client to main: send DONWLOAD$FILENAME
+    main from client: recv DOWNLOAD$FILENAME
+
+    start conn main-datanode
+
+    main to datanode: send DOWNLOAD$FILENAME
+    datanode from main: recv DOWNLOAD$FILENAME
+
+    datanode to main: send SIZE_BYTES
+    main from datanode: recv SIZE_BYTES
+
+    main to client: send SIZE_BYTES
+    client from main: recv SIZE_BYTES
+
+    client to main: send READY
+    main from client: recv READY
+
+    main to datanode: send READY
+    datanode from main: redv READY
+
+    loop:
+        datanode to main: send CHUNK
+        main from datanode: recv CHUNK
+        main to client: send CHUNK
+        client from main: recv CHUNK
+    
+    close conn main-datanode
+    close conn client-main
+
+DELETE:
+    start conn client-main
+
+    client to main: send DELETE$FILENAME
+    main from client: recv DELETE$FILENAME
+
+    start conn main-datanode
+
+    main to datanode: send DELETE$FILENAME
+    datanode from main: recv DELETE$FILENAME
+
+    close conn main-datanode
+    close conn client-main
