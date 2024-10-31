@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 import socket
 import os
 import threading
@@ -60,7 +61,7 @@ class Datanode:
                 chunk = self.recvall(conn, min(MAX_CHUNK_SIZE_BYTES, file_size - bytes_saved))
                 chunk_size = f.write(chunk)
                 bytes_saved += chunk_size
-                print(f"Saved {bytes_saved}/{file_size} bytes of {file_name}")
+                #print(f"Saved {bytes_saved}/{file_size} bytes of {file_name}")
         end_time = time.time()
         print(f"md5 of {file_name}:\n{calculate_md5(file_path)}")
         print(f'Upload for {file_name} from {addr} completed in {end_time - start_time:.4f} seconds')

@@ -1,10 +1,11 @@
+#!/usr/bin/python3
 import socket
 import os
 import threading
 import random
 import time
 
-MAIN_ADDR = 'localhost'
+MAIN_ADDR = ''
 MAIN_PORT = 5555
 
 CONTROL_MSG_SIZE_BYTES = 1024
@@ -23,8 +24,7 @@ class Main:
             for line in workers:
                 line = line.split()
                 self.workers.append((line[0], int(line[1])))
-        if not os.path.exists('main_dir/'):
-            os.makedirs('main_dir/')
+        
         print(f"Main server initialized with {len(self.workers)} workers and replication factor {self.replication_factor}")
 
     def start(self):
@@ -105,7 +105,7 @@ class Main:
                 chunk = self.recvall(client_conn, min(MAX_CHUNK_SIZE_BYTES, file_size - bytes_sent))
                 datanode_conn.sendall(chunk)
                 bytes_sent += len(chunk)
-                print(f"Sent {bytes_sent}/{file_size} bytes of {file_name} to {datanode_addr}")
+                #print(f"Sent {bytes_sent}/{file_size} bytes of {file_name} to {datanode_addr}")
 
     def download_from_datanodes(self, client_conn: socket.socket, client_addr: tuple[str, int], file_name: str):
         with open(f'main_dir/{file_name}', 'r') as f:

@@ -1,9 +1,10 @@
+#!/usr/bin/python3
 import socket
 import os
 import hashlib
 import time
 
-MAIN_ADDR = 'localhost'
+MAIN_ADDR = '192.168.0.11'
 MAIN_PORT = 5555
 
 CONTROL_MSG_SIZE_BYTES = 1024

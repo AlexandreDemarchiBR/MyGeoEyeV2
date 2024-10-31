@@ -1,0 +1,53 @@
+#!/usr/bin/expect -f
+# control_host.exp host action daemon (control_host.exp 192.168.0.11 main)
+
+set host [lindex $argv 0]
+set action [lindex $argv 1]
+set daemon [lindex $argv 2]
+set user "aluno"
+set password "aula321"
+
+puts "conectando em $host"
+spawn ssh $user@$host
+
+expect {
+    timeout {
+        puts "Connection timed out"
+        exit 1
+    }
+    -re "yes/no" {
+        #puts "host desconhecido"
+        send "yes\r"
+        expect "assword:" {
+            send "$password\r" 
+            #puts "$password enviado"
+            expect "$ "
+        }
+    }
+    "assword:" {
+        send "$password\r"
+        #puts "$password enviado"
+        expect "$ "
+    }
+    "$ " {
+        puts "login sem password"
+        #expect "$ "
+    }
+}
+#send "\r"
+#puts "logado"
+#expect "$ "
+
+send "cd MyGeoEyeV2\r"
+expect "$ "
+# Inicio: especifico em maquinas que exigem venv
+#send "source bin/activate\r"
+#expect "$ "
+#puts "venv inicializado"
+# Fim
+send "./utils/$action\_$daemon.sh\r"
+#puts "start-worker executado"
+expect "$ "
+send "exit\r"
+#puts "fim do script"
+expect eof

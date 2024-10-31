@@ -1,0 +1,38 @@
+#!/usr/bin/expect
+# send_file file 192.168.100.2
+
+set file [lindex $argv 0]
+set host [lindex $argv 1]
+set user "aluno"
+set password "aula321"
+
+puts "enviando $file"
+
+if {$file == "main_dir/workers.txt"} {
+    spawn scp $file $user@$host:~/MyGeoEyeV2/main_dir
+} elseif {[string match "utils*" $file]} {
+    spawn scp $file $user@$host:~/MyGeoEyeV2/utils
+} else {
+    spawn scp $file $user@$host:~/MyGeoEyeV2
+}
+
+expect {
+    -re "yes/no" {
+        #puts "host desconhecido"
+        send "yes\r"
+        expect "assword:" { send "$password\r" }
+    }
+    # Handle the password prompt directly
+    "assword:" {
+        send "$password\r"
+        #puts "$password enviado"
+        exp_continue
+    }
+    # "$ " {
+    #     puts "login sem password"
+    # }
+    # eof {
+    #     puts "scp terminou"
+    # }
+    # puts "fim do script"
+}
