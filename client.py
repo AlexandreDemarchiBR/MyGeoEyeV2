@@ -4,7 +4,7 @@ import os
 import hashlib
 import time
 
-MAIN_ADDR = '192.168.0.11'
+MAIN_ADDR = 'localhost'
 MAIN_PORT = 5555
 
 CONTROL_MSG_SIZE_BYTES = 1024
@@ -121,11 +121,11 @@ def calculate_md5(file_path):
 
 if __name__ == '__main__':
     c = Client(MAIN_ADDR, MAIN_PORT)
-    print(f"md5 of random_garbage BEFORE:\n{calculate_md5('client_dir/random_garbage')}")
+    print(f"md5 of fake_img.jpg BEFORE:\n{calculate_md5('client_dir/fake_img.jpg')}")
 
     input('...')
     print('\nuploading')
-    c.upload_image('client_dir/random_garbage')
+    c.upload_image('client_dir/fake_img.jpg')
 
     input('...')
     print('\nlisting')
@@ -133,14 +133,14 @@ if __name__ == '__main__':
 
     input('...')
     print('\nremoving local copy')
-    os.remove('client_dir/random_garbage')
+    os.remove('client_dir/fake_img.jpg')
 
     input('...')
     print('\ndownloading')
-    download_time = c.download_image('random_garbage')
-    print(f"md5 of random_garbage AFTER:\n{calculate_md5('client_dir/random_garbage')}")
+    download_time = c.download_image('fake_img.jpg')
+    print(f"md5 of fake_img.jpg AFTER:\n{calculate_md5('client_dir/fake_img.jpg')}")
     print(f"Download time: {download_time:.4f} seconds")
 
     input('...')
     print('deleting remote copy')
-    c.delete_image('random_garbage')
+    c.delete_image('fake_img.jpg')

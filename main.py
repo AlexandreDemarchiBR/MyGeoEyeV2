@@ -69,9 +69,48 @@ class Main:
         print(f"Selected datanodes for upload of {file_name}: {selected_datanodes}")
         
         start_time = time.time()
-        for datanode_addr in selected_datanodes:
-            self.upload_to_datanode(client_conn, client_addr, datanode_addr, file_name, file_size)
+        #################################
+        
 
+        datanode_conn_list = []
+        for datanode_addr in selected_datanodes:
+            control_msg = f'UPLOAD${file_name}${file_size}'
+            control_msg = control_msg.ljust(CONTROL_MSG_SIZE_BYTES, ' ')
+            control_msg = control_msg.encode()
+            #self.upload_to_datanode(client_conn, client_addr, datanode_addr, file_name, file_size)
+            datanode_conn_temp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            datanode_conn_temp.connect(datanode_addr)
+            print(f"# main to datanode: send UPLOAD control message to {datanode_addr}")
+            datanode_conn_temp.sendall(control_msg)
+
+            print(f"# main from datanode: recv READY message from {datanode_addr}")
+            control_msg = self.recvall(datanode_conn_temp, CONTROL_MSG_SIZE_BYTES)
+            msg = control_msg.decode()
+            msg = msg.strip().split('$')
+
+            if msg[0] != 'READY':
+                print(f"Datanode {datanode_addr} not ready")
+                datanode_conn_temp.close()
+                for datanode_conn in datanode_conn_list:
+                    datanode_conn.close()
+                return
+            datanode_conn_list.append(datanode_conn_temp)
+
+        print(f"# main to client: send READY message to {client_addr}")
+        client_conn.sendall(control_msg)
+
+        bytes_sent = 0
+        while bytes_sent < file_size:
+            chunk = self.recvall(client_conn, min(MAX_CHUNK_SIZE_BYTES, file_size - bytes_sent))
+            #datanode_conn.sendall(chunk)
+            for datanode_conn in datanode_conn_list:
+                datanode_conn.sendall(chunk)
+            bytes_sent += len(chunk)
+            #print(f"Sent {bytes_sent}/{file_size} bytes of {file_name} to {datanode_addr}")
+
+        
+
+        #################################
         with open(f'main_dir/{file_name}', 'w') as f, self.lock:
             f.write(f"{file_size},{','.join([f'{addr[0]}:{addr[1]}' for addr in selected_datanodes])}")
         
@@ -143,7 +182,7 @@ class Main:
                 chunk = self.recvall(datanode_conn, min(MAX_CHUNK_SIZE_BYTES, file_size - bytes_sent))
                 client_conn.sendall(chunk)
                 bytes_sent += len(chunk)
-                print(f"Sent {bytes_sent}/{file_size} bytes of {file_name} to {client_addr}")
+                #print(f"Sent {bytes_sent}/{file_size} bytes of {file_name} to {client_addr}")
 
     def delete_in_datanodes(self, file_name: str):
         with open(f'main_dir/{file_name}', 'r') as f:
@@ -172,6 +211,7 @@ class Main:
         with conn:
             msg = os.listdir('main_dir')
             msg.remove('workers.txt')
+            msg.remove('main_endpoint.txt')
             msg = ' '.join(msg).encode()
 
             msg_size = len(msg)
